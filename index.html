@@ -1,71 +1,91 @@
-
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>Maryland</title>
-  <style>
-  .boundary {
-    fill: none;
-    stroke: #888;
-    stroke-linejoin: round;
-  }
-  svg {
-    border-style: solid;
-    border-width: 1px;
-    border-color: #ccc;
-  }
-  </style>
-</head>
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>md-geometry</title>
 <body>
-  <div id="map"></div>
-  <script src="http://d3js.org/d3.v3.min.js"></script>
-  <script src="http://d3js.org/topojson.v1.min.js"></script>
-
-  <script>
-(function() {
-
-  var height = 600;
-  var width = 900;
-  var projection = d3.geo.mercator();
-  var mexico = void 0;
-
-  // Special d3 helper that converts geo coordinates to paths
-  // based on a projection
-  var path = d3.geo.path().projection(projection);
-
-  var svg = d3.select("#map")
-      .append("svg")
-      .attr("width", width)
-      .attr("height", height);
-
-  d3.json('marylandcounties.geojson', function(data) {
-    console.log('maryland', data);
-    var states = topojson.feature(data, data.objects.features);
-
-    // Setup the scale and translate
-    var b, s, t;
-    projection.scale(1).translate([0, 0]);
-    var b = path.bounds(states);
-    var s = .95 / Math.max((b[1][0] - b[0][0]) / width, (b[1][1] - b[0][1]) / height);
-    var t = [(width - s * (b[1][0] + b[0][0])) / 2, (height - s * (b[1][1] + b[0][1])) / 2];
-    projection.scale(s).translate(t);
-
-    var map = svg.append('g').attr('class', 'boundary');
-    maryland = map.selectAll('path').data(states.features);
-
-    //Enter
-    maryland.enter()
-       .append('path')
-       .attr('d', path);
-
-    //Update
-    maryland.attr('fill', '#eee');
-
-    //Exit
-    maryland.exit().remove();
+<script src="//d3js.org/d3.v4.min.js"></script>
+<script src="//d3js.org/topojson.v2.min.js"></script>
+<script src="//d3js.org/d3-scale-chromatic.v1.min.js"></script>
+<script>
+var width = 960, height = 500;
+var svg = d3.select('body').append('svg')
+    .attr('width', width)
+    .attr('height', height);
+// For d3 representation of various stateplanes, see: d3-stateplane
+// We'll set the scale and translate later, based on the data
+var projection = d3.geoConicConformal()
+    .parallels([38 + 18 / 60, 39 + 27 / 60])
+    .rotate([77, -37 - 40 / 60]);
+var path = d3.geoPath()
+    .projection(projection);
+var threshold = d3.scaleThreshold()
+    .domain([1, 10, 50, 200, 800, 2000, 5000, 10000])
+    .range(d3.schemeOrRd[9]);
+d3.queue()
+    .defer(d3.json, "tracts.json")
+    .defer(d3.json, "population.json")
+    .await(ready);
+function ready(error, json, population) {
+  if (error) throw error;
+  // Convert topojson to GeoJSON
+  geojson = topojson.feature(json, json.objects.tracts);
+  
+  // Set the projection's scale and translate based on the GeoJSON
+  projection.fitSize([960, 500], geojson);
+  // Extract an array of features (one tract for each feature)
+  tracts = geojson.features;
+  console.log('tracts[0]', tracts[0])
+  console.log('population[0]', population[0])
+  console.log('population[1]', population[1])
+  // Compute population density for each census tract
+  tracts.forEach(function(tract, i) {
+      var countyfips = tract.properties.COUNTYFP;
+      var tractce = tract.properties.TRACTCE;
+      var pop = +population.filter(function(d) { return (d[2] === countyfips) && (d[3] === tractce); })[0][0];
+      var aland = tract.properties.ALAND / 2589975.2356; // area in square miles
+      tract.properties.density = pop / aland;
   });
-
-})();
-  </script>
-</body>
+  // Tracts
+  svg.selectAll('path.tract')
+      .data(tracts)
+    .enter().append('path')
+      .attr('d', path)
+      .attr('class', 'tract')
+      .style('fill', function(d) { return threshold(d.properties.density); })
+      .style('stroke', '#000')
+      .style('stroke-opacity', '0.15')
+  addLegend();
+}
+function addLegend() {
+  var formatNumber = d3.format("d");
+  var x = d3.scalePow().exponent('.15')
+      .domain([1, 80000])
+      .range([0, 300]);
+  var xAxis = d3.axisBottom(x)
+      .tickSize(13)
+      .tickValues(threshold.domain())
+      .tickFormat(formatNumber)
+  var g = svg.append("g")
+      .attr('transform', 'translate(100, 200)')
+      .call(xAxis);
+  g.select(".domain")
+      .remove();
+  g.selectAll("rect")
+    .data(threshold.range().map(function(color) {
+      var d = threshold.invertExtent(color);
+      if (d[0] == null) d[0] = x.domain()[0];
+      if (d[1] == null) d[1] = x.domain()[1];
+      return d;
+    }))
+    .enter().insert("rect", ".tick")
+      .attr("height", 8)
+      .attr("x", function(d) { return x(d[0]); })
+      .attr("width", function(d) { return x(d[1]) - x(d[0]); })
+      .attr("fill", function(d) { return threshold(d[0]); });
+  g.append("text")
+      .attr("fill", "#000")
+      .attr("font-weight", "bold")
+      .attr("text-anchor", "start")
+      .attr("y", -6)
+      .text("Population per square mile");
+}
+</script>
